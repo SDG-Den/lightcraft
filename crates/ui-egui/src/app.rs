@@ -78,6 +78,9 @@ impl LightcraftApp {
             synthetic_mods_release: false,
             host_mods: egui::Modifiers::NONE,
             styled: false,
+            palette: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            palette_watcher: None,
             font_language: i18n::Locale::En,
             chinese_font: None,
             fonts_ready: false,

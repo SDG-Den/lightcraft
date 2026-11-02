@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use craft_ui::theme::palette::Palette;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
 
 pub const FONT_SEMIBOLD: &str = "semibold";
@@ -34,7 +35,7 @@ pub fn label_toast_colors(label: lightcraft_catalog::ColorLabel) -> (Color32, Co
     (Color32::WHITE.lerp_to_gamma(label_color(label), 0.3), Color32::from_rgb(36, 24, 24))
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     /// Top bar, side panels, bottom bar, tool strip.
     pub chrome: Color32,
@@ -271,6 +272,42 @@ impl Tokens {
         }
     }
 
+    /// The tokens of `kind`, with the core chrome roles taken from `palette`. Metrics, fonts and
+    /// the domain colours (photo grid, rings, masks, labels) stay from the built-in theme.
+    pub fn for_palette(kind: ThemeKind, palette: &Palette) -> Tokens {
+        let built_in = Tokens::for_kind(kind);
+        let background = palette.background();
+        let panel = palette.surface();
+        let raised = palette.surface_alt();
+        let outline = palette.outline();
+        let pressed = blend(raised, outline, 0.25);
+        Tokens {
+            chrome: panel,
+            canvas: background,
+            divider: background,
+            inset: blend(background, panel, 0.5),
+            field: blend(background, panel, 0.3),
+            field_border: outline,
+            button: blend(panel, raised, 0.3),
+            button_border: outline,
+            hover: raised,
+            pressed,
+            tool_active: pressed,
+            text: readable_on(palette.text(), panel, 4.5),
+            text_label: readable_on(blend(palette.text(), palette.text_muted(), 0.35), panel, 4.5),
+            text_dim: readable_on(palette.text_muted(), panel, 3.0),
+            text_disabled: blend(palette.text_muted(), background, 0.5),
+            icon: blend(palette.text_muted(), palette.text(), 0.4),
+            track: outline,
+            thumb: palette.text_muted(),
+            thumb_hover: palette.text(),
+            accent: palette.accent(),
+            reject: palette.danger(),
+            caution: palette.warning(),
+            ..built_in
+        }
+    }
+
     pub fn get(ctx: &egui::Context) -> Tokens {
         ctx.data(|d| d.get_temp::<Tokens>(egui::Id::NULL)).unwrap_or_default()
     }
@@ -280,6 +317,29 @@ impl Tokens {
     pub fn semibold(&self, size: f32) -> FontId {
         FontId::new(size, FontFamily::Name(FONT_SEMIBOLD.into()))
     }
+}
+
+/// `a` toward `b` by `amount` (0 to 1), in gamma space like the rest of the tokens.
+fn blend(a: Color32, b: Color32, amount: f32) -> Color32 {
+    a.lerp_to_gamma(b, amount.clamp(0.0, 1.0))
+}
+
+/// `foreground` moved away from `background` until it reaches `target` WCAG contrast, so a
+/// palette whose text sits too close to its surface still reads.
+fn readable_on(foreground: Color32, background: Color32, target: f32) -> Color32 {
+    let away = if crate::button::contrast(background, Color32::WHITE) >= crate::button::contrast(background, Color32::BLACK) {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    let mut color = foreground;
+    for _ in 0..20 {
+        if crate::button::contrast(color, background) >= target {
+            break;
+        }
+        color = blend(color, away, 0.1);
+    }
+    color
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
@@ -417,9 +477,15 @@ pub fn apply(ctx: &egui::Context) {
     apply_kind(ctx, ThemeKind::default());
 }
 
-/// Style `ctx` with `kind`. The visuals go to both of egui's styles, so egui following the
-/// system's dark/light setting on its own never swaps in its stock look.
+/// Style `ctx` with `kind`, without a palette (the built-in theme).
 pub fn apply_kind(ctx: &egui::Context, kind: ThemeKind) {
+    apply_kind_with_palette(ctx, kind, None);
+}
+
+/// Style `ctx` with `kind`, taking the core chrome roles from `palette` when there is one.
+/// The visuals go to both of egui's styles, so egui following the system's dark/light setting on
+/// its own never swaps in its stock look.
+pub fn apply_kind_with_palette(ctx: &egui::Context, kind: ThemeKind, palette: Option<&Palette>) {
     // Keep photo zoom shortcuts from resizing egui itself.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     // A mouse wheel notch scrolls 100 points (egui's default 40 took 50+ notches through an open
@@ -430,7 +496,10 @@ pub fn apply_kind(ctx: &egui::Context, kind: ThemeKind) {
         o.input_options.line_scroll_speed = WHEEL_LINE_POINTS;
         o.input_options.scroll_zoom_speed = WHEEL_ZOOM_PER_POINT;
     });
-    let t = Tokens::for_kind(kind);
+    let t = match palette {
+        Some(palette) => Tokens::for_palette(kind, palette),
+        None => Tokens::for_kind(kind),
+    };
     ctx.data_mut(|d| {
         d.insert_temp(egui::Id::NULL, t);
         d.insert_temp(theme_id(), kind);
@@ -730,6 +799,122 @@ mod tests {
         let (regular, _) = width_and_ink(definitions.clone(), "Library", FontFamily::Proportional);
         let (strong, _) = width_and_ink(definitions, "Library", semibold_family());
         assert!(strong > regular, "strong Latin stays wider than regular: {strong} px, {regular} px");
+    }
+
+    /// A canonical dark palette: base00 is the canvas, base01 the chrome.
+    fn dark_palette() -> Palette {
+        Palette::from_canonical_json(&serde_json::json!({
+            "name": "test-dark",
+            "dark": true,
+            "base00": "#101418",
+            "base01": "#1b2026",
+            "base02": "#262c33",
+            "base03": "#49525c",
+            "base04": "#8b949e",
+            "base05": "#e6edf3",
+            "base08": "#ff6b6b",
+            "base09": "#e3b341",
+            "base0D": "#4c8dff",
+        }))
+        .expect("a canonical palette")
+    }
+
+    /// A canonical light palette.
+    fn light_palette() -> Palette {
+        Palette::from_canonical_json(&serde_json::json!({
+            "name": "test-light",
+            "dark": false,
+            "base00": "#fbfbfb",
+            "base01": "#f1f1f1",
+            "base02": "#e4e4e4",
+            "base03": "#b4b4b4",
+            "base04": "#6a6a6a",
+            "base05": "#202020",
+            "base08": "#c83434",
+            "base09": "#b0761a",
+            "base0D": "#0a62d0",
+        }))
+        .expect("a canonical palette")
+    }
+
+    /// The palette overrides the chrome, canvas, fields, borders, text, accent, danger and
+    /// warning; the photo grid, the rings and the metrics stay from the built-in theme.
+    #[test]
+    fn a_dark_palette_maps_the_chrome_text_and_accent() {
+        let palette = dark_palette();
+        let t = Tokens::for_palette(ThemeKind::Charcoal, &palette);
+        let built_in = Tokens::for_kind(ThemeKind::Charcoal);
+        assert_eq!(t.canvas, palette.background(), "canvas is base00");
+        assert_eq!(t.chrome, palette.surface(), "chrome is base01");
+        assert_eq!(t.field_border, palette.outline(), "borders are base03");
+        assert_eq!(t.text, palette.text(), "text is base05");
+        assert_eq!(t.text_dim, palette.text_muted(), "muted text is base04");
+        assert_eq!(t.accent, palette.accent(), "accent is base0D");
+        assert_eq!(t.reject, palette.danger(), "reject is base08");
+        assert_eq!(t.caution, palette.warning(), "caution is base09");
+        assert_eq!((t.grid_bg, t.cell, t.ring_active), (built_in.grid_bg, built_in.cell, built_in.ring_active), "domain colours stay built in");
+        assert_eq!((t.top_bar_h, t.panel_w), (built_in.top_bar_h, built_in.panel_w), "metrics stay built in");
+    }
+
+    #[test]
+    fn a_light_palette_maps_the_chrome_text_and_accent() {
+        let palette = light_palette();
+        for kind in [ThemeKind::Silver, ThemeKind::Paper] {
+            let t = Tokens::for_palette(kind, &palette);
+            assert_eq!(t.canvas, palette.background(), "{kind:?}");
+            assert_eq!(t.chrome, palette.surface(), "{kind:?}");
+            assert_eq!(t.accent, palette.accent(), "{kind:?}");
+            assert_eq!(t.text, palette.text(), "{kind:?}");
+            assert!(contrast(t.text, t.chrome) >= 4.5, "{kind:?}: {:.2}:1", contrast(t.text, t.chrome));
+        }
+    }
+
+    /// Every `ThemeKind` stays selectable when a palette is in effect: the palette overrides the
+    /// selected kind, it does not remove it.
+    #[test]
+    fn every_theme_kind_survives_a_palette() {
+        for kind in ThemeKind::ALL {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, Some(&dark_palette()));
+            assert_eq!(current(&ctx), Some(kind), "{kind:?}");
+        }
+    }
+
+    /// With no palette, the built-in theme is applied unchanged.
+    #[test]
+    fn without_a_palette_the_built_in_tokens_stay() {
+        for kind in ThemeKind::ALL {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, None);
+            assert_eq!(Tokens::get(&ctx), Tokens::for_kind(kind), "{kind:?}");
+            assert_eq!(current(&ctx), Some(kind), "{kind:?}");
+        }
+    }
+
+    /// Text reaches the app's 4.5:1 target on the chrome, and the label drawn on an accent fill
+    /// reads, even when the palette puts its text too close to its surface.
+    #[test]
+    fn text_and_accent_labels_read_on_their_surfaces() {
+        for palette in [dark_palette(), light_palette()] {
+            for kind in ThemeKind::ALL {
+                let t = Tokens::for_palette(kind, &palette);
+                assert!(contrast(t.text, t.chrome) >= 4.5, "{kind:?} text on chrome: {:.2}:1", contrast(t.text, t.chrome));
+                assert!(contrast(t.text_label, t.chrome) >= 4.5, "{kind:?} label on chrome: {:.2}:1", contrast(t.text_label, t.chrome));
+                assert!(contrast(t.text_dim, t.chrome) >= 3.0, "{kind:?} muted on chrome: {:.2}:1", contrast(t.text_dim, t.chrome));
+            }
+            assert!(
+                contrast(palette.contrast_text(), palette.accent()) >= 4.5,
+                "label on the accent: {:.2}:1",
+                contrast(palette.contrast_text(), palette.accent())
+            );
+        }
+
+        let mut washed_out = dark_palette();
+        washed_out.base[5] = washed_out.base[1];
+        washed_out.base[4] = washed_out.base[1];
+        let t = Tokens::for_palette(ThemeKind::Charcoal, &washed_out);
+        assert!(contrast(t.text, t.chrome) >= 4.5, "lifted text: {:.2}:1", contrast(t.text, t.chrome));
+        assert!(contrast(t.text_dim, t.chrome) >= 3.0, "lifted muted text: {:.2}:1", contrast(t.text_dim, t.chrome));
     }
 
     /// A face with one fixed weight is registered once: nothing heavier can be asked of it. Without

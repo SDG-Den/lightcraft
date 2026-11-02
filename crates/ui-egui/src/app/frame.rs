@@ -7,8 +7,13 @@ impl LightcraftApp {
     /// Install/refresh fonts once and watch the device and availability caches. Setup, not input.
     pub(super) fn ensure_fonts(&mut self, ctx: &egui::Context) {
         if !self.styled {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.palette = craft_ui::theme::palette::Palette::load().map(|loaded| loaded.palette);
+                self.palette_watcher = Some(craft_ui::theme::palette::PaletteWatcher::from_env());
+            }
             theme::install_fonts_with_chinese(ctx, self.chinese_font.as_ref());
-            theme::apply(ctx);
+            self.apply_theme(ctx);
             Self::drop_legacy_panel_state(ctx);
             // File → Add from Device lists cards scanned in the background: show hot-plugs
             let repaint = ctx.clone();
@@ -52,6 +57,8 @@ impl LightcraftApp {
         let now = self.tick_now();
         self.drain_control(ctx);
         self.apply_settings(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_palette(ctx);
         if self.queued_input_needs_repaint() {
             ctx.request_repaint();
         }
