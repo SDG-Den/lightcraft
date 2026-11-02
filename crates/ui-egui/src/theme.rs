@@ -467,9 +467,21 @@ fn theme_id() -> egui::Id {
     egui::Id::unique("lightcraft-theme")
 }
 
-/// The theme `ctx` is styled with (none before the first [`apply_kind`]).
+/// The theme variant `ctx` was styled with (none before the first [`apply_kind`]). This is the
+/// saved selection; a palette decides the dark or light family on its own ([`family_kind`]).
 pub fn current(ctx: &egui::Context) -> Option<ThemeKind> {
     ctx.data(|d| d.get_temp::<ThemeKind>(theme_id()))
+}
+
+/// The built-in kind whose dark/light family matches `palette`. A palette decides whether the
+/// app draws dark or light stock visuals and shadows; the saved variant is kept when its family
+/// already matches.
+fn family_kind(kind: ThemeKind, palette: &Palette) -> ThemeKind {
+    match (palette.is_dark(), kind.is_dark()) {
+        (true, false) => ThemeKind::Charcoal,
+        (false, true) => ThemeKind::Silver,
+        _ => kind,
+    }
 }
 
 /// Style `ctx` with the default theme.
@@ -483,8 +495,9 @@ pub fn apply_kind(ctx: &egui::Context, kind: ThemeKind) {
 }
 
 /// Style `ctx` with `kind`, taking the core chrome roles from `palette` when there is one.
-/// The visuals go to both of egui's styles, so egui following the system's dark/light setting on
-/// its own never swaps in its stock look.
+/// A palette decides the dark or light family ([`family_kind`]); the built-in kind supplies the
+/// variant. The visuals go to both of egui's styles, so egui following the system's dark/light
+/// setting on its own never swaps in its stock look.
 pub fn apply_kind_with_palette(ctx: &egui::Context, kind: ThemeKind, palette: Option<&Palette>) {
     // Keep photo zoom shortcuts from resizing egui itself.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -496,15 +509,18 @@ pub fn apply_kind_with_palette(ctx: &egui::Context, kind: ThemeKind, palette: Op
         o.input_options.line_scroll_speed = WHEEL_LINE_POINTS;
         o.input_options.scroll_zoom_speed = WHEEL_ZOOM_PER_POINT;
     });
+    let built_in = palette.map_or(kind, |palette| family_kind(kind, palette));
     let t = match palette {
-        Some(palette) => Tokens::for_palette(kind, palette),
-        None => Tokens::for_kind(kind),
+        Some(palette) => Tokens::for_palette(built_in, palette),
+        None => Tokens::for_kind(built_in),
     };
+    // The selected variant is recorded, not the family the palette chose: the Appearance Mode
+    // menu and `sync_theme` keep comparing saved choices.
     ctx.data_mut(|d| {
         d.insert_temp(egui::Id::NULL, t);
         d.insert_temp(theme_id(), kind);
     });
-    let dark = kind.is_dark();
+    let dark = built_in.is_dark();
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.chrome;
     v.window_fill = t.chrome;
@@ -888,6 +904,63 @@ mod tests {
             apply_kind_with_palette(&ctx, kind, None);
             assert_eq!(Tokens::get(&ctx), Tokens::for_kind(kind), "{kind:?}");
             assert_eq!(current(&ctx), Some(kind), "{kind:?}");
+        }
+    }
+
+    /// A light palette with a dark saved kind draws light stock visuals, light shadows and the
+    /// light family's built-in base; the saved variant stays for the Appearance Mode menu.
+    #[test]
+    fn a_light_palette_overrides_a_dark_kind_family() {
+        let palette = light_palette();
+        for kind in [ThemeKind::Charcoal, ThemeKind::Midnight] {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, Some(&palette));
+            assert_eq!(current(&ctx), Some(kind), "{kind:?}: the saved variant stays");
+            let t = Tokens::get(&ctx);
+            assert_eq!(t.chrome, palette.surface(), "{kind:?}");
+            assert_eq!(t.canvas, palette.background(), "{kind:?}");
+            assert_eq!(ctx.theme(), egui::Theme::Light, "{kind:?}");
+            assert!(!ctx.style_of(egui::Theme::Light).visuals.dark_mode, "{kind:?}: light stock visuals");
+            assert!(!ctx.style_of(egui::Theme::Dark).visuals.dark_mode, "{kind:?}: both styles are light");
+            assert_eq!(ctx.style_of(egui::Theme::Light).visuals.popup_shadow.color.a(), 50, "{kind:?}: light shadows");
+            assert_eq!(t.ring_active, Tokens::for_kind(ThemeKind::Silver).ring_active, "{kind:?}: light family base");
+        }
+    }
+
+    /// A dark palette with a light saved kind draws dark stock visuals, dark shadows and the dark
+    /// family's built-in base.
+    #[test]
+    fn a_dark_palette_overrides_a_light_kind_family() {
+        let palette = dark_palette();
+        for kind in [ThemeKind::Silver, ThemeKind::Paper] {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, Some(&palette));
+            assert_eq!(current(&ctx), Some(kind), "{kind:?}: the saved variant stays");
+            let t = Tokens::get(&ctx);
+            assert_eq!(t.chrome, palette.surface(), "{kind:?}");
+            assert_eq!(t.canvas, palette.background(), "{kind:?}");
+            assert_eq!(ctx.theme(), egui::Theme::Dark, "{kind:?}");
+            assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode, "{kind:?}: dark stock visuals");
+            assert!(ctx.style_of(egui::Theme::Light).visuals.dark_mode, "{kind:?}: both styles are dark");
+            assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.popup_shadow.color.a(), 140, "{kind:?}: dark shadows");
+            assert_eq!(t.ring_active, Tokens::for_kind(ThemeKind::Charcoal).ring_active, "{kind:?}: dark family base");
+        }
+    }
+
+    /// When the palette's family already matches, the selected variant's own built-in base is kept.
+    #[test]
+    fn a_palette_keeps_the_selected_variant_when_its_family_matches() {
+        let light = light_palette();
+        for kind in [ThemeKind::Silver, ThemeKind::Paper] {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, Some(&light));
+            assert_eq!(Tokens::get(&ctx), Tokens::for_palette(kind, &light), "{kind:?}");
+        }
+        let dark = dark_palette();
+        for kind in [ThemeKind::Charcoal, ThemeKind::Midnight] {
+            let ctx = egui::Context::default();
+            apply_kind_with_palette(&ctx, kind, Some(&dark));
+            assert_eq!(Tokens::get(&ctx), Tokens::for_palette(kind, &dark), "{kind:?}");
         }
     }
 
