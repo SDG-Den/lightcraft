@@ -186,6 +186,22 @@ fn a_remembered_library_it_may_not_read_at_launch_says_so() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// The declarative `settings.override.json` from the NixOS and home-manager modules wins over the
+/// saved value; a damaged overlay is ignored and the saved settings still load.
+#[test]
+fn the_settings_overlay_wins_over_the_saved_ui_json() {
+    let d = dir("overlay");
+    let path = d.join("ui.json");
+    std::fs::write(&path, br#"{"thumbSize": 210.0}"#).unwrap();
+    std::fs::write(d.join(craft_settings::overlay::OVERLAY_FILE), br#"{"thumbSize": 260.0}"#).unwrap();
+    let (ui, warning, keep) = load_prefs_at(&path, true);
+    assert_eq!(ui.unwrap().thumb_size, 260.0);
+    assert!(warning.is_none() && !keep);
+    std::fs::write(d.join(craft_settings::overlay::OVERLAY_FILE), b"{").unwrap();
+    assert_eq!(load_prefs_at(&path, true).0.unwrap().thumb_size, 210.0);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// Issue #103: a damaged ui.json (which holds the library location) is kept aside and
 /// reported, not silently replaced by the defaults.
 #[test]

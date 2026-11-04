@@ -54,8 +54,14 @@ pub(crate) fn load_prefs(in_memory: bool) -> (Option<UiState>, Option<String>, b
 
 /// Compatibility recovery is limited to persisted docking, not runtime UiState commands. An
 /// arrangement from an older docking version starts again from the default without a warning.
-fn decode_saved_ui(bytes: &[u8]) -> Result<(UiState, bool), String> {
+///
+/// The read-only `settings.override.json` written by the NixOS and home-manager modules is merged
+/// over the saved value first, so its values win and are never written back.
+fn decode_saved_ui(config_dir: &std::path::Path, bytes: &[u8]) -> Result<(UiState, bool), String> {
     let mut saved: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if let Some(overlay) = craft_settings::overlay::load_overlay(config_dir) {
+        craft_settings::overlay::merge(&mut saved, overlay);
+    }
     let fields = saved.as_object_mut().ok_or("settings must be an object")?;
     lightcraft_ui_egui::docking::drop_outdated(fields);
     let recovered =
@@ -80,7 +86,8 @@ pub(crate) fn load_prefs_at(path: &std::path::Path, set_aside_damaged: bool) -> 
             return (None, Some(msg), true);
         }
     };
-    match decode_saved_ui(&bytes) {
+    let config_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    match decode_saved_ui(config_dir, &bytes) {
         Ok((ui, false)) => (Some(ui.sanitized()), None, false),
         Ok((ui, true)) => {
             let msg = format!(
