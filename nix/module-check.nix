@@ -119,7 +119,49 @@ let
   home = evalModule "home-manager" true { thumbSize = 260; };
   homePlain = evalModule "home-manager" false { };
 
+  binaryStub = pkgs.runCommand "lightcraft-binary-stub" { } "touch $out";
+
+  evalDefault =
+    useBinary: binary:
+    lib.evalModules {
+      specialArgs = {
+        inherit pkgs;
+        lightcraftSourcePackage = lightcraft;
+        lightcraftBinaryPackage = binary;
+      };
+      modules = [
+        (import ./module.nix { kind = "nixos"; })
+        nixosStub
+        {
+          programs.lightcraft = {
+            enable = true;
+            inherit useBinary;
+          };
+        }
+      ];
+    };
+
+  nixosDefault = evalDefault true binaryStub;
+  nixosNoBinary = evalDefault true null;
+  nixosSourceChosen = evalDefault false binaryStub;
+
   assertions = [
+    {
+      what = "useBinary defaults to true";
+      ok = nixosDefault.config.programs.lightcraft.useBinary;
+    }
+    {
+      what = "the binary is the default package";
+      ok = nixosDefault.config.environment.systemPackages == [ binaryStub ];
+    }
+    {
+      what = "the source build is used without a binary";
+      ok = nixosNoBinary.config.environment.systemPackages == [ lightcraft ];
+    }
+    {
+      what = "useBinary = false selects the source build";
+      ok = nixosSourceChosen.config.environment.systemPackages == [ lightcraft ];
+    }
     {
       what = "nixos installs the package";
       ok = nixos.config.environment.systemPackages == [ lightcraft ];

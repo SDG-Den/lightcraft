@@ -17,6 +17,10 @@
   # The package of this flake; `flake.nix` passes it through `_module.args`, so importing the
   # module directly needs no overlay.
   lightcraftPackage ? pkgs.lightcraft,
+  # `flake.nix` passes the source build and the pre-built release binary separately. Importing the
+  # module directly falls back to `lightcraftPackage` and no binary.
+  lightcraftSourcePackage ? lightcraftPackage,
+  lightcraftBinaryPackage ? null,
   ...
 }:
 
@@ -63,10 +67,24 @@ in
   options.programs.lightcraft = {
     enable = mkEnableOption "LightCraft";
 
+    useBinary = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Install the pre-built Linux binary from `binary-url.json` when this system has one,
+        instead of building from source. Falls back to the source build when the file is missing
+        or the system is unsupported.
+      '';
+    };
+
     package = mkOption {
       type = types.package;
-      default = lightcraftPackage;
-      defaultText = lib.literalMD "the `lightcraft` package of this flake";
+      default =
+        if cfg.useBinary && lightcraftBinaryPackage != null then
+          lightcraftBinaryPackage
+        else
+          lightcraftSourcePackage;
+      defaultText = lib.literalMD "the pre-built binary from `binary-url.json`, or the source build";
       description = "The LightCraft package to install.";
     };
 
