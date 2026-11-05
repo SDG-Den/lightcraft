@@ -256,6 +256,12 @@ pub struct LightcraftApp {
     /// synthetic gesture releases instead of unconditionally announcing `NONE`.
     host_mods: egui::Modifiers,
     styled: bool,
+    /// The suite palette the theme is drawn from (loaded from the shared theme file at startup;
+    /// `None` keeps the built-in theme, as the web build always does).
+    pub(crate) palette: Option<craft_ui::theme::palette::Palette>,
+    /// Watches the palette file, so a change restyles the running app.
+    #[cfg(not(target_arch = "wasm32"))]
+    palette_watcher: Option<craft_ui::theme::palette::PaletteWatcher>,
     /// The language the installed fonts were built for: the CJK fallback order follows the UI
     /// language's script, so switching language reinstalls them.
     font_language: i18n::Locale,

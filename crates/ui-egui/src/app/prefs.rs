@@ -6,13 +6,36 @@ impl LightcraftApp {
         self.services.system_theme.as_ref().and_then(|read| read(ctx)).or_else(|| ctx.system_theme())
     }
 
+    /// Restyle `ctx` with the theme the settings select (Appearance Mode, the dark and light
+    /// themes, the system's appearance in Auto), drawn from the current suite palette when there
+    /// is one and from the built-in theme otherwise.
+    pub fn apply_theme(&mut self, ctx: &egui::Context) {
+        let kind = self.ui.settings.theme(self.system_theme(ctx));
+        theme::apply_kind_with_palette(ctx, kind, self.palette.as_ref());
+    }
+
     /// Restyle `ctx` when the theme the settings select (Appearance Mode, the dark and light
     /// themes, the system's appearance in Auto) is not the one it shows. A no-op otherwise.
     pub fn sync_theme(&mut self, ctx: &egui::Context) {
         let wanted = self.ui.settings.theme(self.system_theme(ctx));
         if theme::current(ctx) != Some(wanted) {
-            theme::apply_kind(ctx, wanted);
+            theme::apply_kind_with_palette(ctx, wanted, self.palette.as_ref());
         }
+    }
+
+    /// Pick up a palette file changed since the last poll and restyle with it. The file is read on
+    /// the frame thread, at most every 400 ms, and only while the window is visible: a hidden
+    /// window must not wake every 400 ms. The web build has no file to watch: it keeps the
+    /// built-in theme.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn poll_palette(&mut self, ctx: &egui::Context) {
+        if !viewport_visible(ctx) {
+            return;
+        }
+        let loaded = self.palette_watcher.as_mut().and_then(|watcher| watcher.poll(ctx));
+        let Some(loaded) = loaded else { return };
+        self.palette = Some(loaded.palette);
+        self.apply_theme(ctx);
     }
 
     /// Back from an external editor: pick up the files it saved. Reads `i.focused`, which
@@ -110,5 +133,41 @@ impl LightcraftApp {
         });
         self.renderer.set_display(display);
         self.screen_profile = icc;
+    }
+}
+
+/// Whether the host reports the window as visible. A host that says nothing (headless,
+/// `RawInput::default`) counts as visible, as the app's other hidden-window checks do.
+#[cfg(not(target_arch = "wasm32"))]
+fn viewport_visible(ctx: &egui::Context) -> bool {
+    ctx.input(|input| input.viewport().visible().unwrap_or(true))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    fn viewport(minimized: bool, occluded: bool) -> egui::RawInput {
+        let info = egui::ViewportInfo { minimized: Some(minimized), occluded: Some(occluded), ..Default::default() };
+        let mut viewports = egui::ViewportIdMap::default();
+        viewports.insert(egui::ViewportId::ROOT, info);
+        egui::RawInput { viewports, ..Default::default() }
+    }
+
+    /// A hidden window never reaches the palette watcher, so it does not wake every 400 ms; a host
+    /// that reports no visibility at all is treated as visible.
+    #[test]
+    fn a_hidden_window_is_not_visible_to_the_palette_poll() {
+        let ctx = egui::Context::default();
+        let mut seen = Vec::new();
+        let _ = ctx.run_pass(viewport(true, false), |ctx| seen.push(viewport_visible(ctx)));
+        let _ = ctx.run_pass(viewport(false, true), |ctx| seen.push(viewport_visible(ctx)));
+        let _ = ctx.run_pass(viewport(false, false), |ctx| seen.push(viewport_visible(ctx)));
+        assert_eq!(seen, [false, false, true]);
+
+        let unknown = egui::Context::default();
+        let mut seen = None;
+        let _ = unknown.run_pass(egui::RawInput::default(), |ctx| seen = Some(viewport_visible(ctx)));
+        assert_eq!(seen, Some(true));
     }
 }
