@@ -1,0 +1,8 @@
+{
+  "url": "https://github.com/SDG-Den/lightcraft/releases/download/binary-testing/lightcraft-0.17.0-linux-x86_64.tar.gz",
+  "hash": "sha256-5DylRJwpD6VbooE6ORYsLSx2cK48CjynGE04RBdEZlc=",
+  "version": "0.17.0",
+  "tag": "binary-testing",
+  "system": "x86_64-linux",
+  "repo": "SDG-Den/lightcraft"
+}
