@@ -10,8 +10,9 @@
 #     flake input); without it everything builds and runs, but Japanese and Chinese text have no glyphs;
 #   * the desktop file, hicolor icons and AppStream metadata are the same files the .deb/.rpm ship
 #     (packaging/linux/), so `apt` and NixOS users see one identical LightCraft;
-#   * `doCheck` runs `cargo test --workspace`, what `cargo xtask ci` runs. `nix build` runs it too;
-#     `pkgs.lightcraft.overrideAttrs { doCheck = false; }` skips it for a faster, build-only install.
+#   * `doCheck` is off: the sandbox has no GPU adapter and the corpus tests need downloaded media
+#     (`cargo xtask ci` is the gate). `pkgs.lightcraft.overrideAttrs { doCheck = true; }` runs the
+#     `cargo test --workspace` suite anyway.
 #
 # Everything in the product is pure Rust (no C/C++ dependencies), so this needs no build system
 # beyond cargo plus the windowing headers winit's build scripts look for.
@@ -119,9 +120,12 @@ rustPlatform.buildRustPackage {
     "lightcraft-cli"
   ];
 
-  # `cargo xtask ci` runs `cargo test --workspace`. Tests that need what the sandbox cannot have
-  # skip themselves with a note: corpus/ (gitignored, `cargo xtask corpus --download`) and the GPU
-  # equivalence tests (no adapter).
+  # Tests that need a GPU adapter or the downloaded corpus skip themselves in the sandbox, and the
+  # remaining workspace suite is not what this package is for: `cargo xtask ci` is the gate.
+  # `overrideAttrs { doCheck = true; }` runs the `cargo test --workspace` suite.
+  doCheck = false;
+
+  # `cargo xtask ci` runs `cargo test --workspace`, which `overrideAttrs { doCheck = true; }` uses.
   cargoTestFlags = [ "--workspace" ];
 
   # One test thread at a time (RUST_TEST_THREADS=1). `lightcraft-catalog`'s `tests_lock` tests share

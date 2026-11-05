@@ -73,6 +73,15 @@
         lightcraft = final.callPackage ./nix/package.nix packageArgs;
       };
 
+      apps = forAllSystems (
+        _: system: {
+          default = {
+            type = "app";
+            program = lib.getExe self.packages.${system}.lightcraft;
+          };
+        }
+      );
+
       devShells = forAllSystems (
         pkgs: system:
         let
@@ -103,8 +112,15 @@
       );
 
       checks = forAllSystems (
-        pkgs: system: {
+        pkgs: system:
+        let
           lightcraft = self.packages.${system}.lightcraft;
+        in
+        {
+          lightcraft = lightcraft;
+
+          # Both module entry points evaluate with `enable = true` (no full NixOS evaluation).
+          modules = pkgs.callPackage ./nix/module-check.nix { inherit lightcraft; };
 
           # `nix fmt` formats the flake; this keeps it formatted.
           formatting = pkgs.runCommand "lightcraft-nix-formatting" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
@@ -115,5 +131,21 @@
       );
 
       formatter = forAllSystems (pkgs: _: pkgs.nixfmt);
+
+      # Both modules take the package from this flake unless `programs.lightcraft.package` is set,
+      # so `nixosModules.default`/`homeManagerModules.default` work without the overlay.
+      nixosModules.default =
+        { pkgs, ... }:
+        {
+          imports = [ (import ./nix/module.nix { kind = "nixos"; }) ];
+          _module.args.lightcraftPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.lightcraft;
+        };
+
+      homeManagerModules.default =
+        { pkgs, ... }:
+        {
+          imports = [ (import ./nix/module.nix { kind = "home-manager"; }) ];
+          _module.args.lightcraftPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.lightcraft;
+        };
     };
 }
